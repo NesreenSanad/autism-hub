@@ -12,5 +12,6 @@ def get_connection() -> Iterator[psycopg.Connection]:
     url = get_settings().database_url
     if not url:
         raise RuntimeError("DATABASE_URL is not set")
-    with psycopg.connect(url) as conn:
+    # The Supabase pooler (port 6543) does not support prepared statements.
+    with psycopg.connect(url, prepare_threshold=None) as conn:
         yield conn
