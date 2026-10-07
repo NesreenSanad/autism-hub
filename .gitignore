@@ -1,0 +1,31 @@
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Node / Next.js / Expo
+node_modules/
+.next/
+out/
+.expo/
+dist/
+build/
+*.tsbuildinfo
+
+# Logs and OS
+*.log
+logs/
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/
