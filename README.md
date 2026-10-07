@@ -9,10 +9,10 @@ A tool for families of autistic children in Egypt. The first feature is a daily-
 | `backend/` | FastAPI API and the daily doctor-check job. Deploys on MochaHost cPanel ("Setup Python App", Passenger). |
 | `frontend/` | Next.js web app (PWA, Arabic RTL + English). |
 | `mobile/` | Expo / React Native app (added later). |
-| `database/` | Supabase SQL migrations (PostGIS, pgvector, tables) and seed data. |
+| `supabase/` | Supabase migrations (PostGIS, pgvector, tables, governorates). Applied automatically on merge by the Supabase GitHub integration. |
 | `docs/` | Plans and the provider schema. |
 
-The database itself lives in Supabase. `database/` only holds the scripts that build it, so its history is tracked in Git.
+The database itself lives in Supabase. `supabase/` only holds the scripts that build it, so its history is tracked in Git.
 
 ## Secrets
 
@@ -21,5 +21,5 @@ Never commit credentials. Copy `.env.example` to `.env` (ignored by Git) and fil
 ## Getting started
 
 - Backend: see [backend/README.md](backend/README.md)
-- Database: see [database/README.md](database/README.md)
+- Database: see [supabase/README.md](supabase/README.md)
 - Web: see [frontend/README.md](frontend/README.md)

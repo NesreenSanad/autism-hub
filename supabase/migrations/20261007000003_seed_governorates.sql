@@ -1,4 +1,4 @@
--- Egypt's 27 governorates.
+-- Egypt's 27 governorates. Reference data, kept as a migration so it also reaches production.
 insert into governorates (code, name_ar, name_en) values
   ('cairo',          'القاهرة',        'Cairo'),
   ('giza',           'الجيزة',         'Giza'),
