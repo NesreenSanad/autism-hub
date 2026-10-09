@@ -151,13 +151,18 @@ def mark_missed(conn, record_id: int) -> None:
                  "where id = %s", (record_id,))
 
 
-def mark_missing_since(conn, source: int, since: datetime) -> int:
-    """For sources that send their whole list each time (CSV): every record not
-    seen since `since` was missing from this import."""
-    cur = conn.execute("update source_records set missed_runs = missed_runs + 1 "
-                       "where source_id = %s and last_seen_at < %s and review_status <> 'rejected'",
-                       (source, since))
-    return cur.rowcount
+def mark_missing_since(conn, source: int, since: datetime, governorates: Optional[list] = None) -> int:
+    """For sources that send their whole list each time (CSV, OpenStreetMap):
+    every record not seen since `since` was missing from this run. With
+    `governorates`, only records in those governorates count (the ones that
+    were actually searched)."""
+    sql = ("update source_records set missed_runs = missed_runs + 1 "
+           "where source_id = %s and last_seen_at < %s and review_status <> 'rejected'")
+    params: list = [source, since]
+    if governorates is not None:
+        sql += " and data->>'governorate_code' = any(%s)"
+        params.append(governorates)
+    return conn.execute(sql, params).rowcount
 
 
 def mark_stale(conn, after_misses: int) -> int:

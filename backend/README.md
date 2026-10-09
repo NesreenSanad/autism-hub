@@ -44,15 +44,21 @@ Facebook and similar sites are not scraped (their terms forbid it).
 
 | Source | How it runs | New listings |
 |---|---|---|
-| Google Places API | `jobs/daily_check.py`, daily via cron; searches each governorate in `GOOGLE_PLACES_GOVERNORATES` every 7 days and re-checks known places every 7 days | wait for review |
-| CSV lists (NGOs, hospitals, your own) | `python -m jobs.import_csv list.csv --source "<list name>"`, by hand | go live (add `--review` to hold them) |
+| OpenStreetMap (free, no key) | `jobs/daily_check.py`, daily via cron; searches every governorate in `OSM_GOVERNORATES` through the Overpass API | wait for review |
+| CSV lists (NGOs, hospitals, your own) | `python -m jobs.import_csv list.csv --source "<list name>"`, by hand; add `--geocode` to look up coordinates from addresses (free, Nominatim) | go live (add `--review` to hold them) |
+| Google Places API (optional, paid) | off unless `GOOGLE_PLACES_API_KEY` is set; searches weekly and re-checks known places weekly | wait for review |
+
+OpenStreetMap data is under the ODbL licence: wherever the app shows it, it must say
+"© OpenStreetMap contributors" with a link to https://www.openstreetmap.org/copyright.
+OSM has fewer Egyptian clinics than Google, so CSV lists matter: every list you import fills the gaps.
 
 CSV columns are in `collector/providers_template.csv`. Run with `--check` first to see problems without saving.
 
 ### Reviewing in Supabase (Table Editor)
 
-- **New Google places:** `source_records` where `review_status = pending`. Set it to `approved` to list
-  the place, or `rejected` to ignore it for good. The `data` column shows what Google returned.
+- **New places from OpenStreetMap or Google:** `source_records` where `review_status = pending`. Set it to
+  `approved` to list the place, or `rejected` to ignore it for good. The `data` column shows what the
+  source returned and `source_url` links to it.
 - **Risky changes** (phone, address, name, location, closed): `change_events` where
   `review_status = pending`. Set `approved` to apply or `rejected` to ignore.
   Low-risk changes (website, English name, services) are applied at once and logged as `applied`.
@@ -64,7 +70,7 @@ A facility that all its sources stop returning for `STALE_AFTER_MISSES` checks i
 becomes `possibly_stale`; if it comes back it becomes `active` again. A listing marked
 `closed` or `removed_on_request` is never reopened by the job.
 
-### Google Places cost
+### Google Places cost (only if you turn it on)
 
 Each search page or place check is one billed request (phone and website fields use the
 "Enterprise" price tier). Three governorates x 4 queries x up to 2 pages is at most 24 search

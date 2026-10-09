@@ -9,7 +9,7 @@ Every request is billed, so the client stops at a per-run request budget.
 """
 import logging
 import re
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Dict, Iterator, Optional, Tuple
 
 import httpx
 
@@ -84,18 +84,6 @@ class PlacesClient:
         return resp.json()
 
 
-def _facility_type(name: str, types: List[str]) -> str:
-    if "hospital" in types:
-        return "hospital"
-    if {"school", "primary_school", "secondary_school"} & set(types):
-        return "school"
-    if re.search(r"مركز|center|centre|جمعي|مؤسس", name, re.IGNORECASE):
-        return "center"
-    if "doctor" in types or re.search(r"عياد|clinic|دكتور|د\.", name, re.IGNORECASE):
-        return "clinic"
-    return "center"
-
-
 def to_record(place: Dict[str, Any], governorates: normalize.GovernorateMatcher,
               fallback_governorate: Optional[str] = None) -> Tuple[str, Dict[str, Any]]:
     """Google place -> (place_id, normalised record)."""
@@ -112,7 +100,7 @@ def to_record(place: Dict[str, Any], governorates: normalize.GovernorateMatcher,
     location = place.get("location") or {}
     raw = {
         "name_ar" if _ARABIC.search(name) else "name_en": name,
-        "facility_type": _facility_type(name, types),
+        "facility_type": normalize.facility_type(name, types),
         "governorate_code": governorate,
         "address_ar": address,
         "lat": normalize.coord(location.get("latitude")),

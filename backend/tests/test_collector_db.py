@@ -7,7 +7,7 @@ import os
 
 import httpx
 
-from collector import google_places, store
+from collector import google_places, osm, store
 from jobs import daily_check, import_csv
 
 CSV_HEADER = "id,name_ar,governorate,address_ar,lat,lng,phone,website,provider_name_ar,provider_type,specialties,services\n"
@@ -161,7 +161,8 @@ def test_budget_stops_requests():
 
 
 def test_daily_check_run(conn, monkeypatch):
-    use_test_database(monkeypatch, GOOGLE_PLACES_API_KEY="test-key", GOOGLE_PLACES_GOVERNORATES="cairo,nowhere")
+    use_test_database(monkeypatch, GOOGLE_PLACES_API_KEY="test-key", GOOGLE_PLACES_GOVERNORATES="cairo,nowhere",
+                      OSM_ENABLED="false")
     client, calls = fake_google({}, [place("p1", "مركز الامل", "+20 10 01234567")])
     monkeypatch.setattr(google_places, "PlacesClient", lambda *a, **k: client)
 
@@ -185,3 +186,74 @@ def test_daily_check_run(conn, monkeypatch):
         200, json={"places": []}) if r.url.path.endswith(":searchText") else httpx.Response(404)))
     daily_check.run()
     assert one(conn, "select missed_runs from source_records where external_id = 'p1'")["missed_runs"] == 1
+
+
+def osm_element(osm_id, name, phone="+20 2 2222 3333", lat=30.05):
+    return {"type": "node", "id": osm_id, "lat": lat, "lon": 31.33,
+            "tags": {"name": name, "amenity": "clinic", "phone": phone, "healthcare:speciality": "speech_therapy"}}
+
+
+class FakeOsm:
+    def __init__(self, by_governorate, fail=()):
+        self.by_governorate, self.fail, self.calls = by_governorate, set(fail), []
+
+    def search_governorate(self, code):
+        self.calls.append(code)
+        if code in self.fail:
+            raise httpx.HTTPError("busy")
+        return self.by_governorate.get(code, [])
+
+    def geocode(self, query):
+        self.calls.append(query)
+        return (30.1, 31.2) if "مدينة نصر" in query else None
+
+
+def test_osm_daily_run(conn, monkeypatch):
+    use_test_database(monkeypatch, OSM_GOVERNORATES="cairo,giza")
+    from app.config import get_settings
+    fake = FakeOsm({"cairo": [osm_element(1, "مركز التخاطب"), osm_element(2, "")],
+                    "giza": [osm_element(3, "Speech Center Giza")]})
+    stats = {}
+    daily_check.run_osm(conn, get_settings(), stats, client=fake)
+    assert fake.calls == ["cairo", "giza"]
+    assert stats["osm"]["new"] == 2 and stats["osm"]["unnamed"] == 1
+    rec = one(conn, "select * from source_records where external_id = 'node/1'")
+    assert rec["review_status"] == "pending" and rec["source_url"] == "https://www.openstreetmap.org/node/1"
+    assert rec["data"]["specialties"] == ["speech_therapy"] and rec["data"]["governorate_code"] == "cairo"
+
+    # Not due again the same day.
+    daily_check.run_osm(conn, get_settings(), {}, client=fake)
+    assert fake.calls == ["cairo", "giza"]
+
+    # Next day: node 1 gone from Cairo; Giza fails, so node 3 is not counted as missed.
+    conn.execute("update ingest_runs set started_at = now() - interval '1 day'")
+    conn.execute("update source_records set last_seen_at = now() - interval '1 day'")
+    fake2 = FakeOsm({"cairo": []}, fail={"giza"})
+    stats = {}
+    daily_check.run_osm(conn, get_settings(), stats, client=fake2)
+    assert stats["osm"]["failed_governorates"] == ["giza"] and stats["osm"]["missing"] == 1
+    assert one(conn, "select missed_runs from source_records where external_id = 'node/1'")["missed_runs"] == 1
+    assert one(conn, "select missed_runs from source_records where external_id = 'node/3'")["missed_runs"] == 0
+
+
+def test_osm_to_record_handles_ways_and_english_names():
+    element = {"type": "way", "id": 9, "center": {"lat": 31.2, "lon": 29.9},
+               "tags": {"name": "Hope Autism Center", "name:ar": "مركز الأمل للتوحد",
+                        "addr:street": "شارع فؤاد", "addr:city": "الإسكندرية",
+                        "contact:phone": "03 4567890;012 3456 7890", "website": "hope.example"}}
+    external_id, record, url = osm.to_record(element, "alexandria")
+    assert external_id == "way/9" and url.endswith("/way/9")
+    assert record["name_ar"] == "مركز الأمل للتوحد" and record["name_en"] == "Hope Autism Center"
+    assert record["facility_type"] == "center" and record["phone"] == "+2034567890"
+    assert record["address_ar"] == "شارع فؤاد، الإسكندرية" and record["lat"] == 31.2
+
+
+def test_csv_geocode(conn, tmp_path, monkeypatch):
+    rows = [{"name_ar": "مركز", "address_ar": "مدينة نصر", "governorate_code": "cairo"},
+            {"name_ar": "مركز 2", "address_ar": "مكان مجهول"},
+            {"name_ar": "مركز 3", "lat": 30.0, "lng": 31.0, "address_ar": "مدينة نصر"}]
+    fake = FakeOsm({})
+    import_csv.geocode(conn, "Test NGO", rows, client=fake)
+    assert (rows[0]["lat"], rows[0]["lng"]) == (30.1, 31.2)
+    assert "lat" not in rows[1] and len(fake.calls) == 2
+    assert "القاهرة" in fake.calls[0]

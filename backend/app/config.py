@@ -14,6 +14,10 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:3000"
 
     # Doctor collector (jobs/daily_check.py)
+    osm_enabled: bool = True                    # OpenStreetMap: free, no key
+    osm_governorates: str = "all"               # "all", or codes such as "cairo,giza"
+    osm_every_days: int = 1
+    # Google Places: optional and paid; off while the key is empty
     google_places_api_key: Optional[str] = None
     google_places_max_requests: int = 200       # per run; every request is billed
     google_places_governorates: str = "cairo,giza,alexandria"

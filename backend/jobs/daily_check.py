@@ -4,14 +4,18 @@
 
 Each run:
 1. Applies what a reviewer approved in Supabase (new records, pending changes).
-2. Google Places, if GOOGLE_PLACES_API_KEY is set:
+2. OpenStreetMap (free, unless OSM_ENABLED=false), every OSM_EVERY_DAYS days:
+   searches each governorate in OSM_GOVERNORATES for autism-related clinics,
+   centres and therapists. New places wait for review; places that disappear
+   from OSM count as missed.
+3. Google Places, optional and paid, only if GOOGLE_PLACES_API_KEY is set:
    - discovery (every GOOGLE_DISCOVERY_EVERY_DAYS days): searches autism
      queries in each governorate of GOOGLE_PLACES_GOVERNORATES; new places
      wait for review;
    - refresh: re-checks known places not checked for GOOGLE_REFRESH_EVERY_DAYS
      days, so changes and closures are caught and Google data stays fresh.
    It stops at GOOGLE_PLACES_MAX_REQUESTS requests per run.
-3. Marks facilities that every source has missed STALE_AFTER_MISSES times in a
+4. Marks facilities that every source has missed STALE_AFTER_MISSES times in a
    row as 'possibly_stale'.
 
 Add `--dry-run` to only report what is due.
@@ -22,9 +26,46 @@ import logging
 from datetime import timedelta
 
 from app.config import get_settings
-from collector import google_places, store
+from collector import google_places, osm, store
 
 log = logging.getLogger("daily_check")
+
+
+def run_osm(conn, settings, stats: dict, client=None) -> None:
+    last = store.last_ok_run(conn, "osm")
+    if last is not None and store.now() - last < timedelta(days=settings.osm_every_days) - timedelta(hours=1):
+        log.info("openstreetmap checked at %s; not due yet", last)
+        return
+    if settings.osm_governorates.strip().lower() == "all":
+        governorates = list(osm.GOVERNORATE_ISO)
+    else:
+        governorates = [g.strip() for g in settings.osm_governorates.split(",") if g.strip() in osm.GOVERNORATE_ISO]
+
+    source = store.source_id(conn, osm.SOURCE_NAME, osm.SOURCE_URL, osm.TERMS_NOTE)
+    run_id = store.start_run(conn, "osm", source)
+    started = conn.execute("select now() as t").fetchone()["t"]
+    counts = {"new": 0, "changed": 0, "unchanged": 0, "unnamed": 0}
+    searched, failed = [], []
+    seen = set()
+    for code, error, elements in osm.search(client or osm.OsmClient(), governorates):
+        if error:
+            failed.append(code)
+            continue
+        searched.append(code)
+        for element in elements:
+            external_id, record, url = osm.to_record(element, code)
+            if external_id in seen:
+                continue
+            seen.add(external_id)
+            if not (record.get("name_ar") or record.get("name_en")):
+                counts["unnamed"] += 1
+                continue
+            counts[store.save_record(conn, source, external_id, record, url)] += 1
+    counts["missing"] = store.mark_missing_since(conn, source, started, searched)
+    counts["failed_governorates"] = failed
+    # A run where every area failed is retried tomorrow; partial failures are just logged.
+    store.finish_run(conn, run_id, counts, "all overpass requests failed" if failed and not searched else None)
+    stats["osm"] = counts
 
 
 def run_google(conn, settings, stats: dict) -> None:
@@ -96,7 +137,8 @@ def run(dry_run: bool = False) -> None:
                 "+ (select count(*) from change_events where review_status = 'approved') as approved").fetchone()
             log.info("waiting for review: %s new records, %s changes; approved and not yet applied: %s",
                      pending["records"], pending["changes"], pending["approved"])
-            log.info("google places: %s", "configured" if settings.google_places_api_key else "no API key")
+            log.info("openstreetmap: %s; google places: %s", "on" if settings.osm_enabled else "off",
+                     "configured" if settings.google_places_api_key else "off (no API key)")
             return
 
         run_id = store.start_run(conn, "daily_check")
@@ -104,10 +146,10 @@ def run(dry_run: bool = False) -> None:
         error = None
         try:
             stats["reviews"] = store.apply_reviews(conn)
+            if settings.osm_enabled:
+                run_osm(conn, settings, stats)
             if settings.google_places_api_key:
                 run_google(conn, settings, stats)
-            else:
-                log.info("GOOGLE_PLACES_API_KEY not set; skipping Google Places")
             stats["marked_stale"] = store.mark_stale(conn, settings.stale_after_misses)
         except Exception as exc:
             error = f"{type(exc).__name__}: {exc}"

@@ -137,6 +137,21 @@ class GovernorateMatcher:
         return found
 
 
+def facility_type(name: str, types: Iterable[str]) -> str:
+    """Guess the facility type from its name and the source's place types
+    (Google types, or OSM amenity/healthcare values)."""
+    types = set(types)
+    if "hospital" in types:
+        return "hospital"
+    if {"school", "primary_school", "secondary_school"} & types:
+        return "school"
+    if re.search(r"مركز|center|centre|جمعي|مؤسس", name, re.IGNORECASE):
+        return "center"
+    if {"doctor", "doctors", "clinic"} & types or re.search(r"عياد|clinic|دكتور|د\.", name, re.IGNORECASE):
+        return "clinic"
+    return "center"
+
+
 def build_record(raw: Dict[str, Any]) -> Dict[str, Any]:
     """Keep known fields, clean text, and drop empty values."""
     record: Dict[str, Any] = {}
