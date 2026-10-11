@@ -46,7 +46,9 @@ Facebook and similar sites are not scraped (their terms forbid it).
 |---|---|---|
 | OpenStreetMap (free, no key) | `jobs/daily_check.py`, daily via cron; searches every governorate in `OSM_GOVERNORATES` through the Overpass API | wait for review |
 | CSV lists (NGOs, hospitals, your own) | `python -m jobs.import_csv list.csv --source "<list name>"`, by hand; add `--geocode` to look up coordinates from addresses (free, Nominatim) | go live (add `--review` to hold them) |
-| Google Places API (optional, paid) | off unless `GOOGLE_PLACES_API_KEY` is set; searches weekly and re-checks known places weekly | wait for review |
+| Google Places API (optional, paid) | used when `COLLECTOR_SOURCES` includes `google` and `GOOGLE_PLACES_API_KEY` is set; searches weekly and re-checks known places weekly | wait for review |
+
+Pick the automatic sources with `COLLECTOR_SOURCES` in `.env`: `osm` (default), `google`, or `osm,google`.
 
 OpenStreetMap data is under the ODbL licence: wherever the app shows it, it must say
 "© OpenStreetMap contributors" with a link to https://www.openstreetmap.org/copyright.

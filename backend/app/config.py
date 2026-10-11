@@ -14,10 +14,12 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:3000"
 
     # Doctor collector (jobs/daily_check.py)
-    osm_enabled: bool = True                    # OpenStreetMap: free, no key
+    # Which automatic sources the daily job uses: "osm", "google" or "osm,google".
+    # osm = OpenStreetMap (free, no key); google = Google Places (paid, needs the key below).
+    collector_sources: str = "osm"
     osm_governorates: str = "all"               # "all", or codes such as "cairo,giza"
     osm_every_days: int = 1
-    # Google Places: optional and paid; off while the key is empty
+    # Google Places, used only when "google" is in COLLECTOR_SOURCES
     google_places_api_key: Optional[str] = None
     google_places_max_requests: int = 200       # per run; every request is billed
     google_places_governorates: str = "cairo,giza,alexandria"
@@ -29,6 +31,10 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> List[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
+    @property
+    def collector_source_list(self) -> List[str]:
+        return [s.strip().lower() for s in self.collector_sources.split(",") if s.strip()]
 
     @property
     def google_places_governorate_list(self) -> List[str]:

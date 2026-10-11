@@ -162,7 +162,7 @@ def test_budget_stops_requests():
 
 def test_daily_check_run(conn, monkeypatch):
     use_test_database(monkeypatch, GOOGLE_PLACES_API_KEY="test-key", GOOGLE_PLACES_GOVERNORATES="cairo,nowhere",
-                      OSM_ENABLED="false")
+                      COLLECTOR_SOURCES="google")
     client, calls = fake_google({}, [place("p1", "مركز الامل", "+20 10 01234567")])
     monkeypatch.setattr(google_places, "PlacesClient", lambda *a, **k: client)
 
@@ -257,3 +257,16 @@ def test_csv_geocode(conn, tmp_path, monkeypatch):
     assert (rows[0]["lat"], rows[0]["lng"]) == (30.1, 31.2)
     assert "lat" not in rows[1] and len(fake.calls) == 2
     assert "القاهرة" in fake.calls[0]
+
+
+def test_sources_setting_picks_the_source(conn, monkeypatch):
+    calls = []
+    monkeypatch.setattr(daily_check, "run_osm", lambda *a, **k: calls.append("osm"))
+    monkeypatch.setattr(daily_check, "run_google", lambda *a, **k: calls.append("google"))
+    use_test_database(monkeypatch)                       # default: osm only
+    daily_check.run()
+    use_test_database(monkeypatch, COLLECTOR_SOURCES="google")   # google without a key: skipped
+    daily_check.run()
+    use_test_database(monkeypatch, COLLECTOR_SOURCES="osm, Google", GOOGLE_PLACES_API_KEY="k")
+    daily_check.run()
+    assert calls == ["osm", "osm", "google"]

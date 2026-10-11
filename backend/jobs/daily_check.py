@@ -4,11 +4,14 @@
 
 Each run:
 1. Applies what a reviewer approved in Supabase (new records, pending changes).
-2. OpenStreetMap (free, unless OSM_ENABLED=false), every OSM_EVERY_DAYS days:
+COLLECTOR_SOURCES picks the automatic sources: "osm" (default), "google" or
+"osm,google".
+
+2. OpenStreetMap ("osm", free), every OSM_EVERY_DAYS days:
    searches each governorate in OSM_GOVERNORATES for autism-related clinics,
    centres and therapists. New places wait for review; places that disappear
    from OSM count as missed.
-3. Google Places, optional and paid, only if GOOGLE_PLACES_API_KEY is set:
+3. Google Places ("google", paid, needs GOOGLE_PLACES_API_KEY):
    - discovery (every GOOGLE_DISCOVERY_EVERY_DAYS days): searches autism
      queries in each governorate of GOOGLE_PLACES_GOVERNORATES; new places
      wait for review;
@@ -137,8 +140,8 @@ def run(dry_run: bool = False) -> None:
                 "+ (select count(*) from change_events where review_status = 'approved') as approved").fetchone()
             log.info("waiting for review: %s new records, %s changes; approved and not yet applied: %s",
                      pending["records"], pending["changes"], pending["approved"])
-            log.info("openstreetmap: %s; google places: %s", "on" if settings.osm_enabled else "off",
-                     "configured" if settings.google_places_api_key else "off (no API key)")
+            log.info("sources: %s; google api key: %s", ", ".join(settings.collector_source_list) or "none",
+                     "set" if settings.google_places_api_key else "not set")
             return
 
         run_id = store.start_run(conn, "daily_check")
@@ -146,10 +149,17 @@ def run(dry_run: bool = False) -> None:
         error = None
         try:
             stats["reviews"] = store.apply_reviews(conn)
-            if settings.osm_enabled:
+            sources = settings.collector_source_list
+            unknown = set(sources) - {"osm", "google"}
+            if unknown:
+                log.warning("ignoring unknown COLLECTOR_SOURCES: %s (use osm, google)", ", ".join(sorted(unknown)))
+            if "osm" in sources:
                 run_osm(conn, settings, stats)
-            if settings.google_places_api_key:
-                run_google(conn, settings, stats)
+            if "google" in sources:
+                if settings.google_places_api_key:
+                    run_google(conn, settings, stats)
+                else:
+                    log.warning("COLLECTOR_SOURCES includes google but GOOGLE_PLACES_API_KEY is empty; skipping Google")
             stats["marked_stale"] = store.mark_stale(conn, settings.stale_after_misses)
         except Exception as exc:
             error = f"{type(exc).__name__}: {exc}"
