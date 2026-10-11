@@ -1,0 +1,2 @@
+id,name_ar,name_en,facility_type,governorate,city,address_ar,address_en,lat,lng,phone,whatsapp,website,facebook,provider_name_ar,provider_name_en,provider_type,gender,specialties,services,notes_ar,source_url
+example-1,عيادة د. مثال,Example Clinic,clinic,القاهرة,مدينة نصر,شارع مثال، مدينة نصر، القاهرة,,30.0561,31.3301,01001234567,01001234567,,,د. مثال الاسم,Dr Example Name,doctor,female,child_psychiatry,autism_diagnosis;parent_training,مثال فقط - احذف هذا الصف,https://example.org/list
