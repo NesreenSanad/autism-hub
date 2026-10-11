@@ -35,22 +35,29 @@ log = logging.getLogger("daily_check")
 
 
 def run_osm(conn, settings, stats: dict, client=None) -> None:
-    last = store.last_ok_run(conn, "osm")
-    if last is not None and store.now() - last < timedelta(days=settings.osm_every_days) - timedelta(hours=1):
-        log.info("openstreetmap checked at %s; not due yet", last)
-        return
     if settings.osm_governorates.strip().lower() == "all":
         governorates = list(osm.GOVERNORATE_ISO)
     else:
         governorates = [g.strip() for g in settings.osm_governorates.split(",") if g.strip() in osm.GOVERNORATE_ISO]
+    job = "osm"
+    last = store.last_ok_run(conn, "osm")
+    if last is not None and store.now() - last < timedelta(days=settings.osm_every_days) - timedelta(hours=1):
+        # Not due, but governorates that failed last time are tried again today.
+        retry = [g for g in store.last_failed_governorates(conn) if g in governorates]
+        if not retry:
+            log.info("openstreetmap checked at %s; not due yet", last)
+            return
+        log.info("openstreetmap: retrying %s, which failed last time", ", ".join(retry))
+        governorates, job = retry, "osm_retry"
 
     source = store.source_id(conn, osm.SOURCE_NAME, osm.SOURCE_URL, osm.TERMS_NOTE)
-    run_id = store.start_run(conn, "osm", source)
+    run_id = store.start_run(conn, job, source)
     started = conn.execute("select now() as t").fetchone()["t"]
     counts = {"new": 0, "changed": 0, "unchanged": 0, "unnamed": 0}
     searched, failed = [], []
     seen = set()
-    for code, error, elements in osm.search(client or osm.OsmClient(), governorates):
+    client = client or osm.OsmClient(urls=settings.overpass_url_list or osm.OVERPASS_URLS)
+    for code, error, elements in osm.search(client, governorates):
         if error:
             failed.append(code)
             continue
@@ -64,11 +71,13 @@ def run_osm(conn, settings, stats: dict, client=None) -> None:
                 counts["unnamed"] += 1
                 continue
             counts[store.save_record(conn, source, external_id, record, url)] += 1
+    # Only governorates that were fully searched count places as missing; failed
+    # ones are kept in the stats and retried on the next run.
     counts["missing"] = store.mark_missing_since(conn, source, started, searched)
     counts["failed_governorates"] = failed
     # A run where every area failed is retried tomorrow; partial failures are just logged.
     store.finish_run(conn, run_id, counts, "all overpass requests failed" if failed and not searched else None)
-    stats["osm"] = counts
+    stats[job] = counts
 
 
 def run_google(conn, settings, stats: dict) -> None:
