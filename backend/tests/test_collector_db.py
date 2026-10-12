@@ -286,12 +286,17 @@ def overpass_client(*responses):
     return client, hosts
 
 
+AREA = {"type": "area", "id": 3600000001}
+
+
 def test_overpass_moves_to_the_next_server_when_busy():
-    client, hosts = overpass_client((504, "busy"), (200, {"elements": [osm_element(1, "مركز")]}))
+    unrelated = {"type": "node", "id": 2, "lat": 30.0, "lon": 31.0, "tags": {"amenity": "school", "name": "مدرسة"}}
+    client, hosts = overpass_client((504, "busy"),
+                                    (200, {"elements": [osm_element(1, "مركز"), unrelated, AREA]}))
     assert [e["id"] for e in client.search_governorate("cairo")] == [1]
     assert hosts == ["a.example", "b.example"]
     # The server that answered is asked first next time.
-    client.http = overpass_client((200, {"elements": []}))[0].http
+    client.http = overpass_client((200, {"elements": [AREA]}))[0].http
     client.search_governorate("giza")
     assert client.current == 1
 
@@ -305,6 +310,27 @@ def test_overpass_partial_answer_counts_as_failure():
     except osm.OverpassBusy as exc:
         assert "timed out" in str(exc)
     assert hosts == ["a.example", "b.example", "a.example"]
+
+
+def test_overpass_missing_boundary_is_an_error_not_an_empty_governorate():
+    client, hosts = overpass_client((200, {"elements": []}))
+    try:
+        client.search_governorate("cairo")
+        raise AssertionError("expected OverpassBusy")
+    except osm.OverpassBusy as exc:
+        assert "EG-C" in str(exc)
+    assert len(hosts) == 1
+
+
+def test_osm_relevance_is_matched_locally():
+    def el(**tags):
+        return {"type": "node", "id": 1, "tags": tags}
+    assert osm.is_relevant(el(amenity="clinic", name="مركز التخاطب وتعديل السلوك"))
+    assert osm.is_relevant(el(healthcare="clinic", **{"name:en": "Cairo Autism Center"}))
+    assert osm.is_relevant(el(healthcare="speech_therapist"))
+    assert osm.is_relevant(el(amenity="doctors", **{"healthcare:speciality": "child_psychiatry"}))
+    assert not osm.is_relevant(el(amenity="clinic", name="عيادة الأسنان"))
+    assert not osm.is_relevant(el(amenity="pharmacy", name="صيدلية التأهيل"))
 
 
 def test_osm_search_retries_failed_governorates_at_the_end():

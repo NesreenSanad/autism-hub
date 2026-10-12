@@ -51,16 +51,35 @@ NAME_PATTERN = (
 SPECIALITY_PATTERN = "psychiatr|speech|occupational|psycholog|behavio|autis|development"
 HEALTHCARE_PATTERN = "^(speech_therapist|occupational_therapist|psychotherapist|psychologist|counselling|rehabilitation)$"
 
+AMENITIES = ("clinic", "doctors", "hospital", "social_facility", "school", "kindergarten")
+
+# The server only does cheap tag lookups; matching names against NAME_PATTERN
+# on the server timed out on the public instances, so names are matched here.
+# `.a out ids` echoes the governorate boundary, to tell "no places" apart from
+# "boundary not found".
 QUERY = """[out:json][timeout:{timeout}];
 area["ISO3166-2"="{iso}"]->.a;
 (
-  nwr(area.a)["healthcare:speciality"~"{speciality}",i];
-  nwr(area.a)["healthcare"~"{healthcare}"];
-  nwr(area.a)["amenity"~"^(clinic|doctors|hospital|social_facility|school|kindergarten)$"]["name"~"{names}",i];
-  nwr(area.a)["healthcare"]["name"~"{names}",i];
-  nwr(area.a)["healthcare"]["name:en"~"{names}",i];
+  nwr(area.a)["healthcare"];
+  nwr(area.a)["amenity"~"^({amenities})$"];
 );
-out center tags;"""
+out center tags;
+.a out ids;"""
+
+_NAME_RE = re.compile(NAME_PATTERN, re.I)
+_SPECIALITY_RE = re.compile(SPECIALITY_PATTERN, re.I)
+_HEALTHCARE_RE = re.compile(HEALTHCARE_PATTERN)
+
+
+def is_relevant(element: Dict[str, Any]) -> bool:
+    """Autism-related: a matching speciality or kind of therapist, or a clinic,
+    centre or school whose name suggests autism, speech or behaviour services."""
+    tags = element.get("tags") or {}
+    if _SPECIALITY_RE.search(tags.get("healthcare:speciality", "")) or _HEALTHCARE_RE.match(tags.get("healthcare", "")):
+        return True
+    if not (tags.get("healthcare") or tags.get("amenity") in AMENITIES):
+        return False
+    return any(_NAME_RE.search(tags.get(k, "")) for k in ("name", "name:ar", "name:en"))
 
 # OSM healthcare:speciality values -> our specialty codes.
 SPECIALITY_CODES = {
@@ -100,8 +119,7 @@ class OsmClient:
         server is retried on the next server after a growing pause; OverpassBusy
         once every attempt failed. A partial answer is never returned, so a
         place is only counted as missing when a full search left it out."""
-        query = QUERY.format(timeout=self.timeout, iso=GOVERNORATE_ISO[code], speciality=SPECIALITY_PATTERN,
-                             healthcare=HEALTHCARE_PATTERN, names=NAME_PATTERN)
+        query = QUERY.format(timeout=self.timeout, iso=GOVERNORATE_ISO[code], amenities="|".join(AMENITIES))
         problem = ""
         for attempt in range(1, self.attempts + 1):
             url = self.urls[self.current]
@@ -111,9 +129,14 @@ class OsmClient:
                 if resp.status_code == 200:
                     body = resp.json()
                     remark = body.get("remark") or ""
-                    if "error" not in remark.lower():
-                        return body.get("elements", [])
-                    problem = f"incomplete answer: {remark.strip()[:120]}"
+                    elements = body.get("elements", [])
+                    if "error" in remark.lower():
+                        problem = f"incomplete answer: {remark.strip()[:120]}"
+                    elif not any(e.get("type") == "area" for e in elements):
+                        # Not worth retrying elsewhere: the boundary tag is missing from OSM.
+                        raise OverpassBusy(f"boundary {GOVERNORATE_ISO[code]} not found in OpenStreetMap")
+                    else:
+                        return [e for e in elements if e.get("type") != "area" and is_relevant(e)]
                 elif resp.status_code in (429,) or resp.status_code >= 500:
                     problem = f"HTTP {resp.status_code}"
                 else:

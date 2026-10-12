@@ -54,6 +54,8 @@ The public Overpass servers are often busy (HTTP 504). The collector then moves 
 server in `OVERPASS_URLS` (default: overpass-api.de, overpass.kumi.systems, overpass.private.coffee),
 waiting a little longer each time, and tries failed governorates once more at the end of the run.
 A governorate that still fails is not counted as missing and is searched again on the next run.
+To keep each request light, the server only looks up places by tag (`healthcare=*` and clinics,
+hospitals, social facilities and schools); names are matched against the autism keywords here.
 
 OpenStreetMap data is under the ODbL licence: wherever the app shows it, it must say
 "© OpenStreetMap contributors" with a link to https://www.openstreetmap.org/copyright.
