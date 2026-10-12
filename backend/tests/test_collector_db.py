@@ -270,3 +270,96 @@ def test_sources_setting_picks_the_source(conn, monkeypatch):
     use_test_database(monkeypatch, COLLECTOR_SOURCES="osm, Google", GOOGLE_PLACES_API_KEY="k")
     daily_check.run()
     assert calls == ["osm", "osm", "google"]
+
+
+def overpass_client(*responses):
+    """OsmClient whose servers answer with `responses` in order, without pauses."""
+    queue, hosts = list(responses), []
+
+    def handler(request):
+        hosts.append(request.url.host)
+        status, body = queue.pop(0)
+        return httpx.Response(status, json=body) if isinstance(body, dict) else httpx.Response(status, text=body)
+
+    client = osm.OsmClient(http=httpx.Client(transport=httpx.MockTransport(handler)), pause_seconds=0,
+                           urls=["https://a.example/api", "https://b.example/api"], attempts=3)
+    return client, hosts
+
+
+AREA = {"type": "area", "id": 3600000001}
+
+
+def test_overpass_moves_to_the_next_server_when_busy():
+    unrelated = {"type": "node", "id": 2, "lat": 30.0, "lon": 31.0, "tags": {"amenity": "school", "name": "مدرسة"}}
+    client, hosts = overpass_client((504, "busy"),
+                                    (200, {"elements": [osm_element(1, "مركز"), unrelated, AREA]}))
+    assert [e["id"] for e in client.search_governorate("cairo")] == [1]
+    assert hosts == ["a.example", "b.example"]
+    # The server that answered is asked first next time.
+    client.http = overpass_client((200, {"elements": [AREA]}))[0].http
+    client.search_governorate("giza")
+    assert client.current == 1
+
+
+def test_overpass_partial_answer_counts_as_failure():
+    timed_out = {"elements": [osm_element(1, "مركز")], "remark": "runtime error: Query timed out in \"query\""}
+    client, hosts = overpass_client((200, timed_out), (429, "slow down"), (200, timed_out))
+    try:
+        client.search_governorate("cairo")
+        raise AssertionError("expected OverpassBusy")
+    except osm.OverpassBusy as exc:
+        assert "timed out" in str(exc)
+    assert hosts == ["a.example", "b.example", "a.example"]
+
+
+def test_overpass_missing_boundary_is_an_error_not_an_empty_governorate():
+    client, hosts = overpass_client((200, {"elements": []}))
+    try:
+        client.search_governorate("cairo")
+        raise AssertionError("expected OverpassBusy")
+    except osm.OverpassBusy as exc:
+        assert "EG-C" in str(exc)
+    assert len(hosts) == 1
+
+
+def test_osm_relevance_is_matched_locally():
+    def el(**tags):
+        return {"type": "node", "id": 1, "tags": tags}
+    assert osm.is_relevant(el(amenity="clinic", name="مركز التخاطب وتعديل السلوك"))
+    assert osm.is_relevant(el(healthcare="clinic", **{"name:en": "Cairo Autism Center"}))
+    assert osm.is_relevant(el(healthcare="speech_therapist"))
+    assert osm.is_relevant(el(amenity="doctors", **{"healthcare:speciality": "child_psychiatry"}))
+    assert not osm.is_relevant(el(amenity="clinic", name="عيادة الأسنان"))
+    assert not osm.is_relevant(el(amenity="pharmacy", name="صيدلية التأهيل"))
+
+
+def test_osm_search_retries_failed_governorates_at_the_end():
+    class Flaky(FakeOsm):
+        def search_governorate(self, code):
+            if code == "giza" and self.calls.count("giza") == 0:
+                self.calls.append(code)
+                raise httpx.HTTPError("busy")
+            return super().search_governorate(code)
+
+    fake = Flaky({"giza": [osm_element(3, "Speech Center Giza")]})
+    results = [(code, error is None, len(elements)) for code, error, elements in osm.search(fake, ["giza", "cairo"])]
+    assert results == [("cairo", True, 0), ("giza", True, 1)]
+
+
+def test_osm_failed_governorates_are_retried_next_run(conn, monkeypatch):
+    use_test_database(monkeypatch, OSM_GOVERNORATES="cairo,giza", OSM_EVERY_DAYS="7")
+    from app.config import get_settings
+    daily_check.run_osm(conn, get_settings(), {}, client=FakeOsm({}, fail={"giza"}))
+
+    # Next day the full search is not due, but Giza is tried again.
+    conn.execute("update ingest_runs set started_at = now() - interval '1 day'")
+    fake = FakeOsm({"giza": [osm_element(3, "Speech Center Giza")]})
+    stats = {}
+    daily_check.run_osm(conn, get_settings(), stats, client=fake)
+    assert fake.calls == ["giza"] and stats["osm_retry"]["new"] == 1
+    assert stats["osm_retry"]["failed_governorates"] == []
+
+    # Nothing left to retry, and the full search is still not due.
+    fake = FakeOsm({})
+    daily_check.run_osm(conn, get_settings(), {}, client=fake)
+    assert fake.calls == []

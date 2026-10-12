@@ -83,6 +83,13 @@ def last_ok_run(conn, job: str) -> Optional[datetime]:
     return row["at"]
 
 
+def last_failed_governorates(conn) -> list:
+    """Governorates the latest OpenStreetMap run (full or retry) could not search."""
+    row = conn.execute("select stats from ingest_runs where job in ('osm', 'osm_retry') "
+                       "and status in ('ok', 'failed') order by started_at desc, id desc limit 1").fetchone()
+    return list((row["stats"] or {}).get("failed_governorates") or []) if row else []
+
+
 # Saving one record --------------------------------------------------------
 def save_record(conn, source: int, external_id: str, record: Dict[str, Any],
                 source_url: Optional[str] = None, auto_approve: bool = False) -> str:

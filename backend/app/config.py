@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     collector_sources: str = "osm"
     osm_governorates: str = "all"               # "all", or codes such as "cairo,giza"
     osm_every_days: int = 1
+    overpass_urls: str = ""                     # comma-separated Overpass servers; empty = built-in list
     # Google Places, used only when "google" is in COLLECTOR_SOURCES
     google_places_api_key: Optional[str] = None
     google_places_max_requests: int = 200       # per run; every request is billed
@@ -35,6 +36,10 @@ class Settings(BaseSettings):
     @property
     def collector_source_list(self) -> List[str]:
         return [s.strip().lower() for s in self.collector_sources.split(",") if s.strip()]
+
+    @property
+    def overpass_url_list(self) -> List[str]:
+        return [u.strip() for u in self.overpass_urls.split(",") if u.strip()]
 
     @property
     def google_places_governorate_list(self) -> List[str]:

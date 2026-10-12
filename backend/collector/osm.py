@@ -11,7 +11,8 @@ itself, waits between requests and asks for little.
 import logging
 import re
 import time
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -22,7 +23,12 @@ log = logging.getLogger(__name__)
 SOURCE_NAME = "openstreetmap"
 SOURCE_URL = "https://www.openstreetmap.org/copyright"
 TERMS_NOTE = "ODbL: credit \"© OpenStreetMap contributors\" wherever this data is shown."
-OVERPASS_URL = "https://overpass-api.de/api/interpreter"
+# Public Overpass servers, tried in turn when one is busy (OVERPASS_URLS overrides).
+OVERPASS_URLS = (
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
+    "https://overpass.private.coffee/api/interpreter",
+)
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 USER_AGENT = "autism-hub-collector/0.1 (+https://github.com/NesreenSanad/autism-hub)"
 
@@ -45,16 +51,35 @@ NAME_PATTERN = (
 SPECIALITY_PATTERN = "psychiatr|speech|occupational|psycholog|behavio|autis|development"
 HEALTHCARE_PATTERN = "^(speech_therapist|occupational_therapist|psychotherapist|psychologist|counselling|rehabilitation)$"
 
+AMENITIES = ("clinic", "doctors", "hospital", "social_facility", "school", "kindergarten")
+
+# The server only does cheap tag lookups; matching names against NAME_PATTERN
+# on the server timed out on the public instances, so names are matched here.
+# `.a out ids` echoes the governorate boundary, to tell "no places" apart from
+# "boundary not found".
 QUERY = """[out:json][timeout:{timeout}];
 area["ISO3166-2"="{iso}"]->.a;
 (
-  nwr(area.a)["healthcare:speciality"~"{speciality}",i];
-  nwr(area.a)["healthcare"~"{healthcare}"];
-  nwr(area.a)["name"~"{names}",i]["amenity"~"^(clinic|doctors|hospital|social_facility|school|kindergarten)$"];
-  nwr(area.a)["name"~"{names}",i]["healthcare"];
-  nwr(area.a)["name:en"~"{names}",i]["healthcare"];
+  nwr(area.a)["healthcare"];
+  nwr(area.a)["amenity"~"^({amenities})$"];
 );
-out center tags;"""
+out center tags;
+.a out ids;"""
+
+_NAME_RE = re.compile(NAME_PATTERN, re.I)
+_SPECIALITY_RE = re.compile(SPECIALITY_PATTERN, re.I)
+_HEALTHCARE_RE = re.compile(HEALTHCARE_PATTERN)
+
+
+def is_relevant(element: Dict[str, Any]) -> bool:
+    """Autism-related: a matching speciality or kind of therapist, or a clinic,
+    centre or school whose name suggests autism, speech or behaviour services."""
+    tags = element.get("tags") or {}
+    if _SPECIALITY_RE.search(tags.get("healthcare:speciality", "")) or _HEALTHCARE_RE.match(tags.get("healthcare", "")):
+        return True
+    if not (tags.get("healthcare") or tags.get("amenity") in AMENITIES):
+        return False
+    return any(_NAME_RE.search(tags.get(k, "")) for k in ("name", "name:ar", "name:en"))
 
 # OSM healthcare:speciality values -> our specialty codes.
 SPECIALITY_CODES = {
@@ -68,11 +93,20 @@ SPECIALITY_CODES = {
 _ARABIC = re.compile(r"[؀-ۿ]")
 
 
+class OverpassBusy(Exception):
+    """Every Overpass server was busy or failed for one governorate."""
+
+
 class OsmClient:
-    def __init__(self, http: Optional[httpx.Client] = None, pause_seconds: float = 2.0, timeout: int = 120):
+    def __init__(self, http: Optional[httpx.Client] = None, pause_seconds: float = 2.0, timeout: int = 180,
+                 urls: Sequence[str] = OVERPASS_URLS, attempts: int = 4, backoff_seconds: float = 15):
         self.http = http or httpx.Client(timeout=timeout + 30, headers={"User-Agent": USER_AGENT})
         self.pause_seconds = pause_seconds
         self.timeout = timeout
+        self.urls = list(urls) or list(OVERPASS_URLS)
+        self.attempts = attempts
+        self.backoff_seconds = backoff_seconds
+        self.current = 0            # index of the server that answered last
         self.requests_made = 0
 
     def _wait(self) -> None:
@@ -81,18 +115,43 @@ class OsmClient:
         self.requests_made += 1
 
     def search_governorate(self, code: str) -> List[Dict[str, Any]]:
-        query = QUERY.format(timeout=self.timeout, iso=GOVERNORATE_ISO[code], speciality=SPECIALITY_PATTERN,
-                             healthcare=HEALTHCARE_PATTERN, names=NAME_PATTERN)
-        for attempt in (1, 2):
+        """All matching elements in one governorate. A busy, failed or timed-out
+        server is retried on the next server after a growing pause; OverpassBusy
+        once every attempt failed. A partial answer is never returned, so a
+        place is only counted as missing when a full search left it out."""
+        query = QUERY.format(timeout=self.timeout, iso=GOVERNORATE_ISO[code], amenities="|".join(AMENITIES))
+        problem = ""
+        for attempt in range(1, self.attempts + 1):
+            url = self.urls[self.current]
             self._wait()
-            resp = self.http.post(OVERPASS_URL, data={"data": query})
-            if resp.status_code in (429, 504) and attempt == 1:
-                log.warning("overpass busy (%s), retrying in 30s", resp.status_code)
-                time.sleep(30 if self.pause_seconds else 0)
-                continue
-            resp.raise_for_status()
-            return resp.json().get("elements", [])
-        return []
+            try:
+                resp = self.http.post(url, data={"data": query})
+                if resp.status_code == 200:
+                    body = resp.json()
+                    remark = body.get("remark") or ""
+                    elements = body.get("elements", [])
+                    if "error" in remark.lower():
+                        problem = f"incomplete answer: {remark.strip()[:120]}"
+                    elif not any(e.get("type") == "area" for e in elements):
+                        # Not worth retrying elsewhere: the boundary tag is missing from OSM.
+                        raise OverpassBusy(f"boundary {GOVERNORATE_ISO[code]} not found in OpenStreetMap")
+                    else:
+                        return [e for e in elements if e.get("type") != "area" and is_relevant(e)]
+                elif resp.status_code in (429,) or resp.status_code >= 500:
+                    problem = f"HTTP {resp.status_code}"
+                else:
+                    resp.raise_for_status()
+            except (httpx.TimeoutException, httpx.TransportError, ValueError) as exc:
+                problem = f"{type(exc).__name__}: {exc}"
+            if attempt == self.attempts:
+                break
+            pause = min(self.backoff_seconds * 2 ** (attempt - 1), 120)
+            self.current = (self.current + 1) % len(self.urls)
+            log.warning("%s: %s from %s; trying %s in %ss", code, problem, _host(url),
+                        _host(self.urls[self.current]), int(pause))
+            if pause and self.pause_seconds:
+                time.sleep(pause)
+        raise OverpassBusy(f"{problem} (after {self.attempts} attempts)")
 
     def geocode(self, query: str) -> Optional[Tuple[float, float]]:
         """Address -> (lat, lng) with Nominatim (its limit is one request per second)."""
@@ -104,6 +163,10 @@ class OsmClient:
         if not hits:
             return None
         return normalize.coord(hits[0]["lat"]), normalize.coord(hits[0]["lon"])
+
+
+def _host(url: str) -> str:
+    return urlsplit(url).hostname or url
 
 
 def _first(tags: Dict[str, str], *keys: str) -> Optional[str]:
@@ -150,11 +213,23 @@ def to_record(element: Dict[str, Any], governorate_code: Optional[str]) -> Tuple
     return external_id, record, f"https://www.openstreetmap.org/{external_id}"
 
 
-def search(client: OsmClient, governorates: List[str]) -> Iterator[Tuple[str, Optional[Exception], List]]:
-    """(governorate, error or None, elements) for each governorate."""
+def search(client: OsmClient, governorates: List[str],
+           retry_pause: float = 300) -> Iterator[Tuple[str, Optional[Exception], List]]:
+    """(governorate, error or None, elements) for each governorate. Governorates
+    that fail are tried once more at the end, when the servers may be quieter."""
+    failed = []
     for code in governorates:
         try:
             yield code, None, client.search_governorate(code)
         except Exception as exc:  # one busy or failed area must not stop the others
-            log.error("overpass failed for %s: %s", code, exc)
+            log.warning("overpass failed for %s, trying again at the end: %s", code, exc)
+            failed.append(code)
+    if failed and retry_pause and getattr(client, "pause_seconds", 0):
+        log.info("waiting %ss before retrying %s", int(retry_pause), ", ".join(failed))
+        time.sleep(retry_pause)
+    for code in failed:
+        try:
+            yield code, None, client.search_governorate(code)
+        except Exception as exc:
+            log.error("overpass failed for %s; it is retried on the next run: %s", code, exc)
             yield code, exc, []
