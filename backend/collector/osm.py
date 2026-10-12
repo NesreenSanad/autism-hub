@@ -100,7 +100,9 @@ class OverpassBusy(Exception):
 class OsmClient:
     def __init__(self, http: Optional[httpx.Client] = None, pause_seconds: float = 2.0, timeout: int = 180,
                  urls: Sequence[str] = OVERPASS_URLS, attempts: int = 4, backoff_seconds: float = 15):
-        self.http = http or httpx.Client(timeout=timeout + 30, headers={"User-Agent": USER_AGENT})
+        # IPv4 only: shared hosts often resolve IPv6 addresses they cannot reach.
+        self.http = http or httpx.Client(timeout=timeout + 30, headers={"User-Agent": USER_AGENT},
+                                         transport=httpx.HTTPTransport(local_address="0.0.0.0"))
         self.pause_seconds = pause_seconds
         self.timeout = timeout
         self.urls = list(urls) or list(OVERPASS_URLS)
@@ -138,7 +140,7 @@ class OsmClient:
                     else:
                         return [e for e in elements if e.get("type") != "area" and is_relevant(e)]
                 elif resp.status_code in (429,) or resp.status_code >= 500:
-                    problem = f"HTTP {resp.status_code}"
+                    problem = f"HTTP {resp.status_code} {_snippet(resp.text)}"
                 else:
                     resp.raise_for_status()
             except (httpx.TimeoutException, httpx.TransportError, ValueError) as exc:
@@ -163,6 +165,11 @@ class OsmClient:
         if not hits:
             return None
         return normalize.coord(hits[0]["lat"]), normalize.coord(hits[0]["lon"])
+
+
+def _snippet(text: str) -> str:
+    """The readable part of an error page, for the log."""
+    return " ".join(re.sub(r"<[^>]+>", " ", text or "").split())[:160]
 
 
 def _host(url: str) -> str:
