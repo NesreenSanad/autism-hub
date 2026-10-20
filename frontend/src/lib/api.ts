@@ -6,7 +6,8 @@ export class ApiError extends Error {
   }
 }
 
-export async function api<T>(path: string, token: string, init: RequestInit = {}): Promise<T> {
+/** Call the API as the signed-in admin; an expired token is refreshed once. */
+export async function api<T>(path: string, token: string, init: RequestInit = {}, retried = false): Promise<T> {
   let resp: Response;
   try {
     resp = await fetch(`${API_URL}${path}`, {
@@ -15,6 +16,11 @@ export async function api<T>(path: string, token: string, init: RequestInit = {}
     });
   } catch {
     throw new ApiError(0, `Can't reach the API at ${API_URL || "(NEXT_PUBLIC_API_URL not set)"}`);
+  }
+  if (resp.status === 401 && !retried) {
+    const { refreshSession } = await import("@/lib/session");
+    const next = await refreshSession();
+    if (next) return api<T>(path, next.access_token, init, true);
   }
   if (!resp.ok) {
     let detail = resp.statusText;

@@ -94,7 +94,9 @@ a change writes the new value at once. To turn it on:
    (Project Settings > API, the public anon key) and `ADMIN_EMAILS` (your email; several
    comma-separated). Add the web app's address to `CORS_ORIGINS`. Restart the app.
 
-The API asks Supabase whose sign-in token it received and only accepts the emails in `ADMIN_EMAILS`.
+The page signs in through the API (`/auth/login`, `/auth/refresh`, `/auth/logout` in `app/routers/session.py`),
+which checks the password with Supabase Auth and only gives a token to the emails in `ADMIN_EMAILS`.
+The web app holds no Supabase keys.
 
 ### Reviewing in Supabase (Table Editor)
 

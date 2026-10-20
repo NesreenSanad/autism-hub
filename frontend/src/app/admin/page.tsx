@@ -1,41 +1,31 @@
 "use client";
 
-import type { Session } from "@supabase/supabase-js";
 import { useCallback, useEffect, useState } from "react";
 
 import { ApiError, api, type Change, type Page, type Place, type Summary } from "@/lib/api";
 import { GOVERNORATES, governorateName } from "@/lib/governorates";
-import { supabase } from "@/lib/supabase";
+import { getSession, onSessionChange, signIn, signOut, type Session } from "@/lib/session";
 
 type Tab = "pending" | "approved" | "rejected" | "changes";
 const PAGE_SIZE = 50;
 
 export default function AdminPage() {
-  const sb = supabase();
   const [session, setSession] = useState<Session | null>(null);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    if (!sb) return;
-    sb.auth.getSession().then(({ data }) => {
-      setSession(data.session);
-      setReady(true);
-    });
-    const { data } = sb.auth.onAuthStateChange((_event, s) => setSession(s));
-    return () => data.subscription.unsubscribe();
-  }, [sb]);
+    setSession(getSession());
+    setReady(true);
+    return onSessionChange(setSession);
+  }, []);
 
   return (
     <div dir="ltr" className="mx-auto max-w-5xl px-4 py-6">
       <h1 className="text-2xl font-bold">Tawasol admin</h1>
-      {!sb ? (
-        <Notice tone="error">
-          Login isn&apos;t set up: NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY are missing from the build.
-        </Notice>
-      ) : !ready ? (
+      {!ready ? (
         <p className="mt-6 opacity-70">Loading…</p>
       ) : session ? (
-        <Dashboard token={session.access_token} email={session.user.email ?? ""} onSignOut={() => sb.auth.signOut()} />
+        <Dashboard token={session.access_token} email={session.email} onSignOut={signOut} />
       ) : (
         <SignIn />
       )}
@@ -53,8 +43,11 @@ function SignIn() {
     e.preventDefault();
     setBusy(true);
     setError("");
-    const { error } = await supabase()!.auth.signInWithPassword({ email, password });
-    if (error) setError(error.message);
+    try {
+      await signIn(email, password);
+    } catch (e) {
+      setError((e as Error).message);
+    }
     setBusy(false);
   }
 
