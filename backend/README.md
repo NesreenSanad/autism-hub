@@ -63,6 +63,18 @@ OSM has fewer Egyptian clinics than Google, so CSV lists matter: every list you 
 
 CSV columns are in `collector/providers_template.csv`. Run with `--check` first to see problems without saving.
 
+### Running it daily on GitHub (instead of cPanel cron)
+
+Some shared hosts can't reach the Overpass servers. `.github/workflows/daily-collector.yml` runs the same
+`python -m jobs.daily_check` on GitHub's servers every day at 01:00 UTC and saves straight to Supabase.
+
+1. GitHub > the repository > **Settings > Secrets and variables > Actions > New repository secret**:
+   name `DATABASE_URL`, value the Supabase Transaction pooler URI (the same one as in `.env`).
+2. **Actions > Daily doctor collector > Run workflow** to run it once now.
+3. Remove the cPanel cron job for `jobs.daily_check`, so the two don't run at the same time.
+
+Optional: a repository variable `COLLECTOR_SOURCES` (default `osm`) and a secret `GOOGLE_PLACES_API_KEY`.
+
 ### Reviewing in Supabase (Table Editor)
 
 - **New places from OpenStreetMap or Google:** `source_records` where `review_status = pending`. Set it to
