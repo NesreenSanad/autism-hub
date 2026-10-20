@@ -3,20 +3,20 @@
 Web app for families, in Arabic (RTL) and English. For now it has:
 
 - `/` a "coming soon" home page.
-- `/admin` the review page: sign in with your Supabase account, then approve or reject the
+- `/admin` the review page: sign in with your admin email and password, then approve or reject the
   places the daily collector found and the risky changes to listed places.
 
 ## Run locally
 
 ```bash
 cd frontend
-cp .env.example .env.local   # then fill in the three values
+cp .env.example .env.local   # the API address
 npm install
 npm run dev                  # http://localhost:3000/admin
 ```
 
-`.env.local` is ignored by Git. It only holds public values: the API address, the Supabase
-URL and the anon key. Never put the service-role key or the database password here.
+The web app only talks to the backend API, including for sign-in (`/auth/login`); it holds
+no Supabase keys. `.env.local` only has the API address.
 The backend must list `http://localhost:3000` in `CORS_ORIGINS`.
 
 ## Deploy
