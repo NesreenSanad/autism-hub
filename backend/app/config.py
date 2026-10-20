@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     collector_sources: str = "osm"
     osm_governorates: str = "all"               # "all", or codes such as "cairo,giza"
     osm_every_days: int = 1
+    osm_method: str = "overpass"                # "overpass" (ask the servers) or "extract" (download Egypt)
+    osm_extract_url: str = ""                   # empty = Geofabrik's Egypt extract
     overpass_urls: str = ""                     # comma-separated Overpass servers; empty = built-in list
     # Google Places, used only when "google" is in COLLECTOR_SOURCES
     google_places_api_key: Optional[str] = None

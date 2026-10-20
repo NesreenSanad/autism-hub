@@ -51,7 +51,8 @@ Facebook and similar sites are not scraped (their terms forbid it).
 Pick the automatic sources with `COLLECTOR_SOURCES` in `.env`: `osm` (default), `google`, or `osm,google`.
 
 The public Overpass servers are often busy (HTTP 504). The collector then moves on to the next
-server in `OVERPASS_URLS` (default: overpass-api.de, overpass.kumi.systems, overpass.private.coffee),
+server in `OVERPASS_URLS` (default: overpass-api.de, overpass.kumi.systems, overpass.private.coffee,
+maps.mail.ru),
 waiting a little longer each time, and tries failed governorates once more at the end of the run.
 A governorate that still fails is not counted as missing and is searched again on the next run.
 To keep each request light, the server only looks up places by tag (`healthcare=*` and clinics,
@@ -65,6 +66,13 @@ CSV columns are in `collector/providers_template.csv`. Run with `--check` first 
 
 ### Running it daily on GitHub (instead of cPanel cron)
 
+On GitHub the collector does not ask the Overpass servers: it downloads Egypt from Geofabrik
+(https://download.geofabrik.de/africa/egypt.html, refreshed daily), keeps healthcare places,
+clinics, hospitals, care facilities and schools with `osmium`, and places them in governorates
+using the boundaries from the same file (`collector/osm_extract.py`, `OSM_METHOD=extract`).
+Set the repository variable `OSM_METHOD` to `overpass` to go back to the servers.
+
+
 Some shared hosts can't reach the Overpass servers. `.github/workflows/daily-collector.yml` runs the same
 `python -m jobs.daily_check` on GitHub's servers every day at 01:00 UTC and saves straight to Supabase.
 
@@ -73,7 +81,7 @@ Some shared hosts can't reach the Overpass servers. `.github/workflows/daily-col
 2. **Actions > Daily doctor collector > Run workflow** to run it once now.
 3. Remove the cPanel cron job for `jobs.daily_check`, so the two don't run at the same time.
 
-Optional: a repository variable `COLLECTOR_SOURCES` (default `osm`) and a secret `GOOGLE_PLACES_API_KEY`.
+Optional: repository variables `COLLECTOR_SOURCES` (default `osm`) and `OVERPASS_URLS` and a secret `GOOGLE_PLACES_API_KEY`.
 
 ### Reviewing in Supabase (Table Editor)
 

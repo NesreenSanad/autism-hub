@@ -28,6 +28,7 @@ OVERPASS_URLS = (
     "https://overpass-api.de/api/interpreter",
     "https://overpass.kumi.systems/api/interpreter",
     "https://overpass.private.coffee/api/interpreter",
+    "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
 )
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 USER_AGENT = "autism-hub-collector/0.1 (+https://github.com/NesreenSanad/autism-hub)"
@@ -99,7 +100,7 @@ class OverpassBusy(Exception):
 
 class OsmClient:
     def __init__(self, http: Optional[httpx.Client] = None, pause_seconds: float = 2.0, timeout: int = 180,
-                 urls: Sequence[str] = OVERPASS_URLS, attempts: int = 4, backoff_seconds: float = 15):
+                 urls: Sequence[str] = OVERPASS_URLS, attempts: int = 6, backoff_seconds: float = 15):
         # IPv4 only: shared hosts often resolve IPv6 addresses they cannot reach.
         self.http = http or httpx.Client(timeout=timeout + 30, headers={"User-Agent": USER_AGENT},
                                          transport=httpx.HTTPTransport(local_address="0.0.0.0"))

@@ -363,3 +363,84 @@ def test_osm_failed_governorates_are_retried_next_run(conn, monkeypatch):
     fake = FakeOsm({})
     daily_check.run_osm(conn, get_settings(), {}, client=fake)
     assert fake.calls == []
+
+
+EXTRACT_OSM = """<?xml version='1.0' encoding='UTF-8'?>
+<osm version="0.6" generator="test">
+  <node id="1" version="1" lat="29.9" lon="31.0"/>
+  <node id="2" version="1" lat="29.9" lon="31.5"/>
+  <node id="3" version="1" lat="30.2" lon="31.5"/>
+  <node id="4" version="1" lat="30.2" lon="31.0"/>
+  <node id="10" version="1" lat="30.05" lon="31.2">
+    <tag k="healthcare" v="speech_therapist"/><tag k="name" v="عيادة التخاطب"/>
+  </node>
+  <node id="11" version="1" lat="30.06" lon="31.3">
+    <tag k="amenity" v="clinic"/><tag k="name" v="عيادة الأسنان"/>
+  </node>
+  <node id="12" version="1" lat="31.2" lon="29.9">
+    <tag k="healthcare" v="psychologist"/><tag k="name" v="Outside"/>
+  </node>
+  <node id="20" version="1" lat="30.10" lon="31.10"/>
+  <node id="21" version="1" lat="30.10" lon="31.11"/>
+  <node id="22" version="1" lat="30.11" lon="31.11"/>
+  <way id="100" version="1">
+    <nd ref="1"/><nd ref="2"/><nd ref="3"/><nd ref="4"/><nd ref="1"/>
+  </way>
+  <way id="200" version="1">
+    <nd ref="20"/><nd ref="21"/><nd ref="22"/><nd ref="20"/>
+    <tag k="amenity" v="clinic"/><tag k="name" v="مركز الأمل للتوحد"/>
+  </way>
+  <relation id="1000" version="1">
+    <member type="way" ref="100" role="outer"/>
+    <tag k="type" v="boundary"/><tag k="boundary" v="administrative"/>
+    <tag k="admin_level" v="4"/><tag k="ISO3166-2" v="EG-C"/><tag k="name" v="القاهرة"/>
+  </relation>
+</osm>
+"""
+
+
+def test_osm_extract_places_by_governorate(tmp_path):
+    import shutil
+
+    import pytest
+    if not shutil.which("osmium"):
+        pytest.skip("osmium not installed")
+    from collector import osm_extract
+    source = tmp_path / "egypt.osm"
+    source.write_text(EXTRACT_OSM, encoding="utf-8")
+    results = {code: (error, elements) for code, error, elements in
+               osm_extract.search(["cairo", "giza"], str(tmp_path), pbf=str(source))}
+    error, elements = results["cairo"]
+    assert error is None
+    assert sorted((e["type"], e["id"]) for e in elements) == [("node", 10), ("way", 200)]
+    way = next(e for e in elements if e["type"] == "way")
+    assert 30.10 <= way["lat"] <= 30.11 and way["tags"]["name"] == "مركز الأمل للتوحد"
+    assert isinstance(results["giza"][0], LookupError)       # no boundary: retried, not "no places"
+    assert osm.to_record(way, "cairo")[0] == "way/200"
+
+
+def test_osm_extract_download_failure_fails_every_governorate(tmp_path):
+    from collector import osm_extract
+    http = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(503)))
+    orig = osm_extract.download
+    try:
+        osm_extract.download = lambda url, path: orig(url, path, http=http)
+        results = list(osm_extract.search(["cairo", "giza"], str(tmp_path)))
+    finally:
+        osm_extract.download = orig
+    assert [(code, error is not None) for code, error, _ in results] == [("cairo", True), ("giza", True)]
+
+
+def test_osm_method_extract_is_used_by_the_daily_run(conn, monkeypatch):
+    from collector import osm_extract
+    use_test_database(monkeypatch, OSM_GOVERNORATES="cairo", OSM_METHOD="extract")
+    from app.config import get_settings
+    calls = []
+
+    def fake_search(governorates, workdir, url):
+        calls.append((governorates, url))
+        yield "cairo", None, [osm_element(1, "مركز التخاطب")]
+    monkeypatch.setattr(osm_extract, "search", fake_search)
+    stats = {}
+    daily_check.run_osm(conn, get_settings(), stats)
+    assert calls == [(["cairo"], osm_extract.EXTRACT_URL)] and stats["osm"]["new"] == 1
