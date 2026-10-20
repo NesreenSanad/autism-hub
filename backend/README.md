@@ -66,6 +66,13 @@ CSV columns are in `collector/providers_template.csv`. Run with `--check` first 
 
 ### Running it daily on GitHub (instead of cPanel cron)
 
+On GitHub the collector does not ask the Overpass servers: it downloads Egypt from Geofabrik
+(https://download.geofabrik.de/africa/egypt.html, refreshed daily), keeps healthcare places,
+clinics, hospitals, care facilities and schools with `osmium`, and places them in governorates
+using the boundaries from the same file (`collector/osm_extract.py`, `OSM_METHOD=extract`).
+Set the repository variable `OSM_METHOD` to `overpass` to go back to the servers.
+
+
 Some shared hosts can't reach the Overpass servers. `.github/workflows/daily-collector.yml` runs the same
 `python -m jobs.daily_check` on GitHub's servers every day at 01:00 UTC and saves straight to Supabase.
 

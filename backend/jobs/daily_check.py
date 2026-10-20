@@ -7,7 +7,8 @@ Each run:
 COLLECTOR_SOURCES picks the automatic sources: "osm" (default), "google" or
 "osm,google".
 
-2. OpenStreetMap ("osm", free), every OSM_EVERY_DAYS days:
+2. OpenStreetMap ("osm", free), every OSM_EVERY_DAYS days (OSM_METHOD=overpass
+   asks the Overpass servers; OSM_METHOD=extract downloads Egypt from Geofabrik):
    searches each governorate in OSM_GOVERNORATES for autism-related clinics,
    centres and therapists. New places wait for review; places that disappear
    from OSM count as missed.
@@ -26,10 +27,12 @@ See backend/collector/store.py for how records, changes and reviews work.
 """
 import argparse
 import logging
+import tempfile
 from datetime import timedelta
 
 from app.config import get_settings
-from collector import google_places, osm, store
+
+from collector import google_places, osm, osm_extract, store
 
 log = logging.getLogger("daily_check")
 
@@ -56,8 +59,14 @@ def run_osm(conn, settings, stats: dict, client=None) -> None:
     counts = {"new": 0, "changed": 0, "unchanged": 0, "unnamed": 0}
     searched, failed = [], []
     seen = set()
-    client = client or osm.OsmClient(urls=settings.overpass_url_list or osm.OVERPASS_URLS)
-    for code, error, elements in osm.search(client, governorates):
+    workdir = tempfile.TemporaryDirectory()
+    if settings.osm_method.strip().lower() == "extract" and client is None:
+        url = settings.osm_extract_url or osm_extract.EXTRACT_URL
+        results = osm_extract.search(governorates, workdir.name, url=url)
+    else:
+        client = client or osm.OsmClient(urls=settings.overpass_url_list or osm.OVERPASS_URLS)
+        results = osm.search(client, governorates)
+    for code, error, elements in results:
         if error:
             failed.append(code)
             continue
@@ -75,8 +84,9 @@ def run_osm(conn, settings, stats: dict, client=None) -> None:
     # ones are kept in the stats and retried on the next run.
     counts["missing"] = store.mark_missing_since(conn, source, started, searched)
     counts["failed_governorates"] = failed
+    workdir.cleanup()
     # A run where every area failed is retried tomorrow; partial failures are just logged.
-    store.finish_run(conn, run_id, counts, "all overpass requests failed" if failed and not searched else None)
+    store.finish_run(conn, run_id, counts, "all openstreetmap searches failed" if failed and not searched else None)
     stats[job] = counts
 
 
