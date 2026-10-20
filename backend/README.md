@@ -83,6 +83,19 @@ Some shared hosts can't reach the Overpass servers. `.github/workflows/daily-col
 
 Optional: repository variables `COLLECTOR_SOURCES` (default `osm`) and `OVERPASS_URLS` and a secret `GOOGLE_PLACES_API_KEY`.
 
+### Reviewing on the admin page
+
+The web app's `/admin` page lists new places and risky changes with Approve / Reject buttons
+(API: `/admin/...` in `app/routers/admin.py`). Approving a place lists it at once; approving
+a change writes the new value at once. To turn it on:
+
+1. Supabase > **Authentication > Users > Add user**: your email and a password.
+2. In `.env` (and cPanel's Python App environment): `SUPABASE_URL`, `SUPABASE_ANON_KEY`
+   (Project Settings > API, the public anon key) and `ADMIN_EMAILS` (your email; several
+   comma-separated). Add the web app's address to `CORS_ORIGINS`. Restart the app.
+
+The API asks Supabase whose sign-in token it received and only accepts the emails in `ADMIN_EMAILS`.
+
 ### Reviewing in Supabase (Table Editor)
 
 - **New places from OpenStreetMap or Google:** `source_records` where `review_status = pending`. Set it to

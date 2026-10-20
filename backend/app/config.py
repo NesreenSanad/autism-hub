@@ -11,6 +11,9 @@ class Settings(BaseSettings):
     database_url: Optional[str] = None
     supabase_url: Optional[str] = None
     supabase_service_role_key: Optional[str] = None
+    # Admin page: who may sign in (Supabase Auth users), comma-separated emails.
+    supabase_anon_key: Optional[str] = None
+    admin_emails: str = ""
     cors_origins: str = "http://localhost:3000"
 
     # Doctor collector (jobs/daily_check.py)
@@ -34,6 +37,10 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> List[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
+    @property
+    def admin_email_list(self) -> List[str]:
+        return [e.strip().lower() for e in self.admin_emails.split(",") if e.strip()]
 
     @property
     def collector_source_list(self) -> List[str]:
