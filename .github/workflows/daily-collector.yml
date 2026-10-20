@@ -25,6 +25,7 @@ jobs:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       COLLECTOR_SOURCES: ${{ vars.COLLECTOR_SOURCES || 'osm' }}
       GOOGLE_PLACES_API_KEY: ${{ secrets.GOOGLE_PLACES_API_KEY }}
+      OVERPASS_URLS: ${{ vars.OVERPASS_URLS }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
