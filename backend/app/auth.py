@@ -51,7 +51,8 @@ def _session(resp: httpx.Response) -> dict:
     """Supabase's token response, trimmed to what the web app needs."""
     if resp.status_code != 200:
         body = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
-        message = body.get("error_description") or body.get("msg") or "Sign-in failed"
+        message = (body.get("error_description") or body.get("msg") or body.get("message")
+                   or f"Sign-in failed (Supabase answered {resp.status_code})")
         raise HTTPException(401, message)
     body = resp.json()
     email = ((body.get("user") or {}).get("email") or "").strip().lower()
