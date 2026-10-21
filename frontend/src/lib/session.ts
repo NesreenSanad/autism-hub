@@ -43,7 +43,10 @@ async function post(path: string, body: unknown, token?: string): Promise<Respon
 export async function signIn(email: string, password: string): Promise<void> {
   const resp = await post("/auth/login", { email, password });
   const body = await resp.json().catch(() => ({}));
-  if (!resp.ok) throw new ApiError(resp.status, typeof body.detail === "string" ? body.detail : "Sign-in failed");
+  if (!resp.ok) {
+    const detail = typeof body.detail === "string" ? body.detail : `the API answered ${resp.status} ${resp.statusText}`;
+    throw new ApiError(resp.status, `Sign-in failed: ${detail} (${API_URL}/auth/login)`);
+  }
   setSession(body as Session);
 }
 
